@@ -1,0 +1,133 @@
+---
+- name: Install packages for matomo
+  package:
+    state: installed
+    name: "{{ item }}"
+  with_items:
+  # for Fedora, should be php-mysql on Centos
+  # but 
+  - php-mysqlnd
+  - php
+  - php-pdo
+  - php-xml
+  - php-mbstring
+  - php-gd
+  - unzip
+  - php-pecl-geoip
+  - perl-libwww-perl
+  notify: restart httpd
+
+#- command: perl /usr/share/doc/GeoIP-1.4.8/fetch-geoipdata.pl
+
+- set_fact:
+    zip_name: "piwik-{{ version }}.zip"
+
+# works for installing from scratch, even if ignore_errors is not really beautiful
+# TODO: finish configuration steps, see below
+
+- name: Get installed version of Matomo
+  shell: "echo | php -F {{ destination }}/piwik/core/Version.php -E 'use Piwik\\Version; echo Version::VERSION . \"\n\"; '"
+  register: current_version
+  ignore_errors: True
+  changed_when: False
+
+- block:
+  - name: Fetch the tarball from builds.piwik.org
+    get_url:
+      url: "https://builds.matomo.org/{{ zip_name }}"
+      dest: /tmp/
+
+  - name: Unzip the tarball
+    shell: unzip -o /tmp/{{ zip_name }} -d {{ destination }} piwik/\*
+    notify: upgrade piwik
+  when: version != current_version.stdout
+
+- name: Set permissions for various piwik files
+  file:
+    owner: apache
+    path: "{{ item }}"
+    state: directory
+  with_items:
+  - "{{ destination }}/piwik/tmp"
+  - "{{ destination }}/piwik/tmp/assets"
+  - "{{ destination }}/piwik/tmp/cache"
+  - "{{ destination }}/piwik/tmp/logs"
+  - "{{ destination }}/piwik/tmp/tcpdf"
+  - "{{ destination }}/piwik/tmp/tracker"
+  - "{{ destination }}/piwik/config"
+  - "{{ destination }}/piwik/tmp/templates_c"
+
+- name: Set permissions for various piwik files
+  sefcontext:
+    target: "{{ item }}(/.*)?"
+    setype: httpd_user_rw_content_t
+    state: present
+  with_items:
+  - "{{ destination }}/piwik/tmp"
+  - "{{ destination }}/piwik/tmp/assets"
+  - "{{ destination }}/piwik/tmp/cache"
+  - "{{ destination }}/piwik/tmp/logs"
+  - "{{ destination }}/piwik/tmp/tcpdf"
+  - "{{ destination }}/piwik/tmp/tracker"
+  - "{{ destination }}/piwik/config"
+  - "{{ destination }}/piwik/tmp/templates_c"
+
+- command: restorecon -R {{ destination }}
+
+- name: Switch httpd_can_network_connect_db to on
+  seboolean:
+    persistent: True
+    state: True
+    name: httpd_can_network_connect_db
+
+#- name: Deploy piwik config
+#  template:
+#    dest: /etc/httpd/conf.d/piwik.conf
+#    src: piwik.conf
+#  notify: restart httpd
+#
+- name: Create DB
+  mysql_db:
+    name: "{{ piwik_db }}"
+    state: present
+
+- name: Create user
+  mysql_user:
+    name: "{{ piwik_db_user }}"
+    password: "{{ piwik_db_pass }}"
+    priv: "{{ piwik_db }}.*:ALL"
+    state: present
+
+- name: Deploy piwik
+  copy:
+    dest: /usr/local/bin/deploy_piwik.php
+    src: deploy_piwik.php
+
+#- name: Create a empty configuration
+#  file:
+#    owner: apache
+#    path: "{{ destination }}/piwik/config/config.ini.php"
+#    state: touch
+
+#TODO make /var/www/piwik/piwik.js be writable by apache ?
+
+#- command: chdir="{{ destination }}/piwik/" php /usr/local/bin/deploy_piwik.php {{ piwik_db_user }} {{ piwik_db_pass }} {{ piwik_db }}
+# besoin d'un
+#- command: creates="{{ destination }}/piwik/config/config.ini.php" perl /usr/local/bin/deploy_piwik.pl
+
+- copy:
+    mode: 0755
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+  with_items:
+  - generate_dump_db_piwik.py
+  - backup.sh
+
+- file:
+    dest: /var/backups/
+    state: directory
+
+- cron:
+    minute: 15
+    name: "backup piwik"
+    job: /usr/local/bin/backup.sh

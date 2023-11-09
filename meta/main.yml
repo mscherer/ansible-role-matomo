@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Michael Scherer
+  description: Role to install piwik
+  company: Red Hat
+  license: MIT
+  min_ansible_version: 2.4
+  platforms:
+  - name: EL
+    versions:
+    - 7
+  categories:
+  - system
+dependencies:
+- { role: mariadb }
+- { role: httpd, document_root: /var/www/piwik/ }

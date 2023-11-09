@@ -1,0 +1,4 @@
+---
+piwik_db: piwik
+piwik_db_user: piwik_user
+destination: /var/www
